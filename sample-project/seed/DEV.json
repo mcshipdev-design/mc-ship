@@ -1,0 +1,133 @@
+{
+  "bu": "DEV",
+  "mid": "510000101",
+  "dataExtensions": [
+    {
+      "kind": "dataExtension",
+      "customerKey": "Subscribers_Master",
+      "name": "Subscribers_Master",
+      "isSendable": true,
+      "sendableField": "SubscriberKey",
+      "fields": [
+        {
+          "name": "SubscriberKey",
+          "type": "Text",
+          "length": 254,
+          "isPrimaryKey": true,
+          "isRequired": true
+        },
+        {
+          "name": "EmailAddress",
+          "type": "EmailAddress",
+          "length": 254,
+          "isRequired": true
+        },
+        {
+          "name": "FirstName",
+          "type": "Text",
+          "length": 100
+        },
+        {
+          "name": "MobilePhone",
+          "type": "Phone"
+        }
+      ],
+      "rowCount": 1200
+    },
+    {
+      "kind": "dataExtension",
+      "customerKey": "Loyalty_Members",
+      "name": "Loyalty_Members",
+      "fields": [
+        {
+          "name": "SubscriberKey",
+          "type": "Text",
+          "length": 254,
+          "isPrimaryKey": true,
+          "isRequired": true
+        },
+        {
+          "name": "Tier",
+          "type": "Text",
+          "length": 20
+        },
+        {
+          "name": "Points",
+          "type": "Text",
+          "length": 10
+        },
+        {
+          "name": "PersonalEmail",
+          "type": "Text",
+          "length": 254
+        },
+        {
+          "name": "DateOfBirth",
+          "type": "Date"
+        }
+      ],
+      "rowCount": 350
+    },
+    {
+      "kind": "dataExtension",
+      "customerKey": "Spring_Promo_Offers",
+      "name": "Spring_Promo_Offers",
+      "retentionDays": 90,
+      "fields": [
+        {
+          "name": "SubscriberKey",
+          "type": "Text",
+          "length": 254,
+          "isPrimaryKey": true,
+          "isRequired": true
+        },
+        {
+          "name": "OfferCode",
+          "type": "Text",
+          "length": 20
+        },
+        {
+          "name": "DiscountPct",
+          "type": "Number"
+        },
+        {
+          "name": "ExpiryDate",
+          "type": "Date"
+        }
+      ],
+      "rowCount": 40
+    }
+  ],
+  "content": [
+    {
+      "kind": "content",
+      "customerKey": "brand-header",
+      "name": "Brand Header",
+      "assetType": "htmlblock",
+      "content": "<table width=\"100%\"><tr><td align=\"center\"><img src=\"https://image.example.com/logo.png\" alt=\"Northwind Outdoors\" width=\"180\"></td></tr></table>\n"
+    },
+    {
+      "kind": "content",
+      "customerKey": "welcome-email",
+      "name": "Welcome Email",
+      "assetType": "htmlemail",
+      "subject": "Welcome to Northwind, %%FirstName%%",
+      "content": "%%[ SET @first = AttributeValue(\"FirstName\") ]%%\n%%=ContentBlockByKey(\"brand-header\")=%%\n<p>Hi %%=v(@first)=%%, welcome aboard.</p>\n<p><a href=\"%%unsub_center_url%%\">Unsubscribe</a></p>\n<p>%%Member_Busname%%, %%Member_Addr%%, %%Member_City%%</p>\n"
+    },
+    {
+      "kind": "content",
+      "customerKey": "promo-footer",
+      "name": "Promo Footer",
+      "assetType": "htmlblock",
+      "content": "<table width=\"100%\"><tr><td style=\"font-size:11px;color:#666\">\n  You are receiving this because you joined Northwind Rewards.<br>\n  %%Member_Busname%%, %%Member_Addr%%, %%Member_City%%, %%Member_PostalCode%%\n</td></tr></table>\n"
+    },
+    {
+      "kind": "content",
+      "customerKey": "spring-promo-email",
+      "name": "Spring Promo Email",
+      "assetType": "htmlemail",
+      "subject": "%%FirstName%%, your spring offer is here",
+      "content": "%%[\n  SET @sk = _subscriberkey\n  SET @code = Lookup(\"Spring_Promo_Offers\", \"OfferCode\", \"SubscriberKey\", @sk)\n  SET @banner = Lookup(\"Spring_Promo_Offers\", \"PromoBanner\", \"SubscriberKey\", @sk)\n  SET @tier = Lookup(\"Loyalty_Members\", \"Tier\", \"SubscriberKey\", @sk)\n]%%\n%%=ContentBlockById(48211)=%%\n<img src=\"%%=v(@banner)=%%\" width=\"600\" alt=\"Spring sale\">\n<h1>Spring sale: your code is %%=v(@code)=%%</h1>\n<p>As a %%=v(@tier)=%% member you get early access.</p>\n%%=ContentBlockByKey(\"promo-footer\")=%%\n"
+    }
+  ]
+}

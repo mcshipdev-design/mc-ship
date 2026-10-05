@@ -1,0 +1,79 @@
+{
+  "bu": "PROD",
+  "mid": "510000202",
+  "dataExtensions": [
+    {
+      "kind": "dataExtension",
+      "customerKey": "Subscribers_Master",
+      "name": "Subscribers_Master",
+      "isSendable": true,
+      "sendableField": "SubscriberKey",
+      "fields": [
+        {
+          "name": "SubscriberKey",
+          "type": "Text",
+          "length": 254,
+          "isPrimaryKey": true,
+          "isRequired": true
+        },
+        {
+          "name": "EmailAddress",
+          "type": "EmailAddress",
+          "length": 254,
+          "isRequired": true
+        },
+        {
+          "name": "FirstName",
+          "type": "Text",
+          "length": 100
+        },
+        {
+          "name": "MobilePhone",
+          "type": "Phone"
+        }
+      ],
+      "rowCount": 1240553
+    },
+    {
+      "kind": "dataExtension",
+      "customerKey": "Loyalty_Members",
+      "name": "Loyalty_Members",
+      "fields": [
+        {
+          "name": "SubscriberKey",
+          "type": "Text",
+          "length": 254,
+          "isPrimaryKey": true,
+          "isRequired": true
+        },
+        {
+          "name": "Tier",
+          "type": "Text",
+          "length": 20
+        },
+        {
+          "name": "Points",
+          "type": "Number"
+        }
+      ],
+      "rowCount": 48210
+    }
+  ],
+  "content": [
+    {
+      "kind": "content",
+      "customerKey": "brand-header",
+      "name": "Brand Header",
+      "assetType": "htmlblock",
+      "content": "<table width=\"100%\"><tr><td align=\"center\"><img src=\"https://image.example.com/logo.png\" alt=\"Northwind Outdoors\" width=\"180\"></td></tr></table>\n"
+    },
+    {
+      "kind": "content",
+      "customerKey": "welcome-email",
+      "name": "Welcome Email",
+      "assetType": "htmlemail",
+      "subject": "Welcome to Northwind, %%FirstName%%",
+      "content": "%%[ SET @first = AttributeValue(\"FirstName\") ]%%\n%%=ContentBlockByKey(\"brand-header\")=%%\n<p>Hi %%=v(@first)=%%, welcome aboard.</p>\n<p><a href=\"%%unsub_center_url%%\">Unsubscribe</a></p>\n<p>%%Member_Busname%%, %%Member_Addr%%, %%Member_City%%</p>\n"
+    }
+  ]
+}
