@@ -6,7 +6,7 @@ import {ContentAsset, DataExtension, DeField, FieldType, Snapshot} from './types
 
 export interface UpsertResult {
   customerKey: string
-  action: 'created' | 'updated' | 'skipped'
+  action: 'created' | 'updated' | 'skipped' | 'failed'
   note?: string
 }
 
