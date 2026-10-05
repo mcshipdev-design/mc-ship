@@ -1,0 +1,9 @@
+{
+  "kind": "dataExtension",
+  "customerKey": "MCShip_Test_DE",
+  "name": "MCShip_Test_DE",
+  "fields": [
+    {"name": "SubscriberKey", "type": "Text", "length": 254, "isPrimaryKey": true, "isRequired": true},
+    {"name": "OfferCode", "type": "Text", "length": 20}
+  ]
+}
