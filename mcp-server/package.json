@@ -1,0 +1,22 @@
+{
+  "name": "mc-ship-mcp",
+  "version": "0.1.0",
+  "description": "MCP server exposing MC Ship (agentia mc) commands as tools",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test.mjs"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "zod": "^3.25.76"
+  },
+  "type": "module",
+  "bin": {
+    "mc-ship-mcp": "server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
