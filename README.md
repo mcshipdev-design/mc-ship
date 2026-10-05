@@ -49,7 +49,7 @@ agentia mc deploy DEV PROD      # deployed, audit log written
 
 ## Connect a real Business Unit
 
-Create an **installed package** in Marketing Cloud with a server-to-server API integration and these scopes: Data Extensions read/write, Saved Content read/write (Content Builder), and Email read.
+Create an **installed package** in Marketing Cloud with a server-to-server API integration and these scopes: Email read/write, Saved Content read/write, Documents and Images read/write, Data Extensions read/write.
 
 ```bash
 MCSHIP_CLIENT_SECRET='<secret>' agentia mc connect DEV \
@@ -141,7 +141,9 @@ cd mcp-server && npm install && MCSHIP_PROJECT_DIR=/tmp/mc-ship-demo npm test   
 ## Status and limits
 
 - Asset types: Data Extensions (schema) and Content Builder `htmlemail`, `htmlblock`, `template`. Automations and Journeys are next.
-- The live client uses documented Marketing Cloud REST and SOAP APIs. The demo uses mock BUs so it is repeatable.
+- **Tested live** against a production Marketing Cloud account (Windows, Agentia CLI beta): pull of a full BU (368 Data Extensions, 67 content assets), filtered pull with `--only`, and deploys that created a Data Extension, a content block and an email, then added a field and updated the email. Smoke test kit: [demo/live-test](demo/live-test/README.md).
+- Installed package scopes needed: Email read/write, Saved Content read/write, Documents and Images read/write, Data Extensions read/write. Without Email write, creating emails returns HTTP 403.
+- The video demo uses mock BUs so it is repeatable and shows no customer data.
 - Built on Agentia CLI `1.0.0-beta.2` (alpha preview): commands may change.
 
 ## Open-source components
