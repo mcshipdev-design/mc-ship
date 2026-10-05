@@ -1,0 +1,7 @@
+{
+  "kind": "content",
+  "customerKey": "MCShip_Test_Email",
+  "name": "MCShip_Test_Email",
+  "assetType": "htmlemail",
+  "subject": "MC Ship test email (do not send)"
+}
