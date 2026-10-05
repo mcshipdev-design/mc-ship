@@ -11,10 +11,40 @@ export interface UpsertResult {
 }
 
 /** What MC Ship needs from a Business Unit. Live and mock clients both implement it. */
+export interface SnapshotOptions {
+  /** Progress messages for people (written to stderr by commands) */
+  onProgress?: (message: string) => void
+  /** Fetch row counts per DE (one API call each). Default true */
+  rowCounts?: boolean
+  /** Only keep DEs and content whose name or key starts with one of these prefixes */
+  only?: string[]
+}
+
+export function matchesOnly(item: {name: string; customerKey: string}, only?: string[]): boolean {
+  if (!only?.length) return true
+  const n = item.name.toLowerCase()
+  const k = item.customerKey.toLowerCase()
+  return only.some((p) => n.startsWith(p.toLowerCase()) || k.startsWith(p.toLowerCase()))
+}
+
+/** Run async jobs with a fixed number in flight */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, i: number) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length)
+  let next = 0
+  const workers = Array.from({length: Math.min(limit, items.length)}, async () => {
+    while (next < items.length) {
+      const i = next++
+      out[i] = await fn(items[i], i)
+    }
+  })
+  await Promise.all(workers)
+  return out
+}
+
 export interface McClient {
   /** Cheap call that proves the connection works */
   verify(): Promise<void>
-  snapshot(): Promise<Snapshot>
+  snapshot(opts?: SnapshotOptions): Promise<Snapshot>
   upsertDataExtension(de: DataExtension, existing?: DataExtension): Promise<UpsertResult>
   upsertContent(asset: ContentAsset): Promise<UpsertResult>
 }
@@ -51,9 +81,15 @@ export class MockClient implements McClient {
     this.read()
   }
 
-  async snapshot(): Promise<Snapshot> {
+  async snapshot(opts: SnapshotOptions = {}): Promise<Snapshot> {
     const s = this.read()
-    return {...s, bu: this.buName, pulledAt: new Date().toISOString()}
+    return {
+      ...s,
+      bu: this.buName,
+      pulledAt: new Date().toISOString(),
+      dataExtensions: s.dataExtensions.filter((d) => matchesOnly(d, opts.only)),
+      content: s.content.filter((c) => matchesOnly(c, opts.only)),
+    }
   }
 
   async upsertDataExtension(de: DataExtension, existing?: DataExtension): Promise<UpsertResult> {
@@ -204,8 +240,12 @@ export class LiveClient implements McClient {
     return results
   }
 
-  async snapshot(): Promise<Snapshot> {
-    const [deRows, fieldRows, content] = await Promise.all([
+  async snapshot(opts: SnapshotOptions = {}): Promise<Snapshot> {
+    const say = opts.onProgress ?? (() => {})
+    say(`Connecting to ${this.buName}...`)
+    await this.auth()
+    say('Reading Data Extensions, fields and Content Builder assets...')
+    const [deRows, fieldRows, allContent] = await Promise.all([
       this.retrieveAll('DataExtension', ['CustomerKey', 'Name', 'IsSendable', 'DataRetentionPeriodLength', 'DataRetentionPeriod']),
       this.retrieveAll('DataExtensionField', [
         'Name',
@@ -215,8 +255,9 @@ export class LiveClient implements McClient {
         'IsRequired',
         'DataExtension.CustomerKey',
       ]),
-      this.contentAssets(),
+      this.contentAssets(say),
     ])
+    const content = allContent.filter((c) => matchesOnly(c, opts.only))
 
     const fieldsByDe = new Map<string, DeField[]>()
     for (const row of fieldRows) {
@@ -233,20 +274,30 @@ export class LiveClient implements McClient {
       fieldsByDe.set(unxml(deKey), list)
     }
 
-    const dataExtensions: DataExtension[] = []
-    for (const row of deRows) {
-      const customerKey = unxml(tag(row, 'CustomerKey') ?? '')
-      const len = Number(tag(row, 'DataRetentionPeriodLength') ?? 0)
-      const unit = tag(row, 'DataRetentionPeriod') ?? 'Days'
-      const factor: Record<string, number> = {Days: 1, Weeks: 7, Months: 30, Years: 365}
-      dataExtensions.push({
-        kind: 'dataExtension',
-        customerKey,
-        name: unxml(tag(row, 'Name') ?? customerKey),
-        isSendable: tag(row, 'IsSendable') === 'true',
-        retentionDays: len > 0 ? len * (factor[unit] ?? 1) : undefined,
-        fields: fieldsByDe.get(customerKey) ?? [],
-        rowCount: await this.rowCount(customerKey),
+    const factor: Record<string, number> = {Days: 1, Weeks: 7, Months: 30, Years: 365}
+    const dataExtensions: DataExtension[] = deRows
+      .map((row) => {
+        const customerKey = unxml(tag(row, 'CustomerKey') ?? '')
+        const len = Number(tag(row, 'DataRetentionPeriodLength') ?? 0)
+        const unit = tag(row, 'DataRetentionPeriod') ?? 'Days'
+        return {
+          kind: 'dataExtension' as const,
+          customerKey,
+          name: unxml(tag(row, 'Name') ?? customerKey),
+          isSendable: tag(row, 'IsSendable') === 'true',
+          retentionDays: len > 0 ? len * (factor[unit] ?? 1) : undefined,
+          fields: fieldsByDe.get(customerKey) ?? [],
+        } as DataExtension
+      })
+      .filter((d) => matchesOnly(d, opts.only))
+    say(`Found ${dataExtensions.length} Data Extensions and ${content.length} content assets.`)
+
+    if (opts.rowCounts !== false && dataExtensions.length) {
+      let done = 0
+      await mapLimit(dataExtensions, 8, async (de) => {
+        de.rowCount = await this.rowCount(de.customerKey)
+        done++
+        if (done % 50 === 0 || done === dataExtensions.length) say(`Row counts: ${done}/${dataExtensions.length}`)
       })
     }
 
@@ -271,9 +322,10 @@ export class LiveClient implements McClient {
     }
   }
 
-  private async contentAssets(): Promise<ContentAsset[]> {
+  private async contentAssets(say: (m: string) => void = () => {}): Promise<ContentAsset[]> {
     const out: ContentAsset[] = []
     for (let page = 1; ; page++) {
+      if (page > 1) say(`Content Builder: ${out.length} assets so far...`)
       const r = await this.rest<{count: number; items: RawAsset[]}>('POST', 'asset/v1/content/assets/query', {
         page: {page, pageSize: 200},
         query: {property: 'assetType.name', simpleOperator: 'in', value: Object.keys(ASSET_TYPE_IDS)},
