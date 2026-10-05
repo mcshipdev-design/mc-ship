@@ -1,0 +1,25 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: {node-version: 22}
+      - name: Install Agentia CLI
+        run: npm install -g @copado/agentia-cli
+      - name: Build and unit-test the plugin
+        working-directory: plugin
+        run: npm ci && npm test && agentia plugins link .
+      - name: Demo release is blocked, then passes after fixes
+        run: |
+          bash demo/reset.sh /tmp/demo
+          cd /tmp/demo
+          if agentia mc check DEV PROD; then echo "expected FAIL"; exit 1; fi
+          node $GITHUB_WORKSPACE/demo/apply-fixes.mjs
+          agentia mc check DEV PROD
+          agentia mc deploy DEV PROD --yes
+      - name: MCP server end-to-end
+        working-directory: mcp-server
+        run: npm ci && MCSHIP_PROJECT_DIR=/tmp/demo npm test
