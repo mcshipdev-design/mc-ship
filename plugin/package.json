@@ -1,0 +1,52 @@
+{
+  "name": "agentia-plugin-mc-ship",
+  "description": "MC Ship: Git-based, policy-checked Salesforce Marketing Cloud releases for Agentia CLI",
+  "version": "0.1.0",
+  "author": "MC Ship contributors",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": "./dist/index.js",
+  "license": "MIT",
+  "keywords": [
+    "oclif-plugin",
+    "agentia"
+  ],
+  "files": [
+    "/dist",
+    "/oclif.manifest.json"
+  ],
+  "dependencies": {
+    "@oclif/core": "^4"
+  },
+  "devDependencies": {
+    "@types/node": "^18",
+    "oclif": "^4",
+    "shx": "^0.3.3",
+    "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "oclif": {
+    "bin": "agentia",
+    "dirname": "agentia-cli",
+    "commands": "./dist/commands",
+    "topics": {
+      "mc": {
+        "description": "MC Ship: Git-based, policy-checked Salesforce Marketing Cloud releases"
+      }
+    }
+  },
+  "scripts": {
+    "build": "shx rm -rf dist && tsc -b",
+    "clean": "shx rm -f oclif.manifest.json",
+    "prepack": "npm run build && oclif manifest",
+    "postpack": "npm run clean",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mcshipdev-design/mc-ship"
+  }
+}
