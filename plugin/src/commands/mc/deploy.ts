@@ -16,7 +16,7 @@ import {AssetChange, CheckResult} from '../../core/types.js'
 interface DeployResult {
   from: string
   to: string
-  status: 'deployed' | 'dry-run' | 'blocked' | 'cancelled' | 'nothing-to-deploy'
+  status: 'deployed' | 'partial' | 'dry-run' | 'blocked' | 'cancelled' | 'nothing-to-deploy'
   check: CheckResult
   changes: AssetChange[]
   results: UpsertResult[]
@@ -99,16 +99,17 @@ export default class McDeploy extends Command {
     const results: UpsertResult[] = []
     for (const de of source.dataExtensions.filter((d) => keys.has(`dataExtension:${d.customerKey}`))) {
       const existing = live.dataExtensions.find((d) => d.customerKey === de.customerKey)
-      results.push(await target.upsertDataExtension(de, existing))
+      results.push(await safely(de.customerKey, () => target.upsertDataExtension(de, existing)))
     }
     const order = {htmlblock: 0, template: 1, htmlemail: 2}
     const content = source.content
       .filter((c) => keys.has(`content:${c.customerKey}`))
       .sort((a, b) => order[a.assetType] - order[b.assetType])
-    for (const c of content) results.push(await target.upsertContent(c))
+    for (const c of content) results.push(await safely(c.customerKey, () => target.upsertContent(c)))
 
     for (const r of results) {
-      this.log(`  ${r.action === 'skipped' ? dim('skip') : green('ok  ')}  ${r.customerKey}  ${dim(r.action)}${r.note ? dim(`  ${r.note}`) : ''}`)
+      const badge = r.action === 'failed' ? red('FAIL') : r.action === 'skipped' ? dim('skip') : green('ok  ')
+      this.log(`  ${badge}  ${r.customerKey}  ${dim(r.action)}${r.note ? (r.action === 'failed' ? `  ${r.note}` : dim(`  ${r.note}`)) : ''}`)
     }
 
     // 4. Record it
@@ -127,7 +128,11 @@ export default class McDeploy extends Command {
       root,
     )
     writeSnapshot(await target.snapshot({only: flags.only, onProgress: progress}), root)
-    this.log(green(`Deployed to ${args.to}.`) + dim(`  Audit log: ${auditLog}`))
+    const failed = results.filter((r) => r.action === 'failed')
+    if (failed.length) {
+      process.exitCode = 1
+      this.log(red(`${failed.length} of ${results.length} asset(s) failed.`) + dim(`  Audit log: ${auditLog}`))
+    } else this.log(green(`Deployed to ${args.to}.`) + dim(`  Audit log: ${auditLog}`))
 
     let attachedToUserStory: boolean | undefined
     if (flags['user-story']) {
@@ -141,7 +146,7 @@ export default class McDeploy extends Command {
       attachedToUserStory = r.ok
       this.log(r.ok ? `Release note attached to ${flags['user-story']}.` : `Could not update user story: ${r.error}`)
     }
-    return {...base, status: 'deployed', results, auditLog, attachedToUserStory}
+    return {...base, status: failed.length ? 'partial' : 'deployed', results, auditLog, attachedToUserStory}
   }
 }
 
@@ -150,5 +155,14 @@ function safeUser(): string {
     return os.userInfo().username
   } catch {
     return process.env.USER ?? process.env.USERNAME ?? 'unknown'
+  }
+}
+
+/** One failing asset must not hide what already happened to the others */
+async function safely(customerKey: string, fn: () => Promise<UpsertResult>): Promise<UpsertResult> {
+  try {
+    return await fn()
+  } catch (error) {
+    return {customerKey, action: 'failed', note: error instanceof Error ? error.message : String(error)}
   }
 }
