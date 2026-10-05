@@ -46,6 +46,7 @@ export default class McDeploy extends Command {
     yes: Flags.boolean({char: 'y', description: 'Skip the confirmation prompt (required with --json)'}),
     force: Flags.boolean({description: 'Deploy even when checks fail. Logged in the audit trail.'}),
     'user-story': Flags.string({description: 'Copado user story to attach the release note to'}),
+    only: Flags.string({description: 'Limit the target refresh to DEs and content whose name or key starts with this prefix (repeatable)', multiple: true}),
   }
 
   public async run(): Promise<DeployResult> {
@@ -56,7 +57,8 @@ export default class McDeploy extends Command {
 
     // 1. Always compare against the live target, not a stale local copy
     this.log(dim(`Refreshing ${args.to} from Marketing Cloud...`))
-    const live = await target.snapshot()
+    const progress = (m: string) => process.stderr.write(`  ${m}\n`)
+    const live = await target.snapshot({only: flags.only, onProgress: progress})
     writeSnapshot(live, root)
     const source = readSnapshot(args.from, root)
 
@@ -124,7 +126,7 @@ export default class McDeploy extends Command {
       },
       root,
     )
-    writeSnapshot(await target.snapshot(), root)
+    writeSnapshot(await target.snapshot({only: flags.only, onProgress: progress}), root)
     this.log(green(`Deployed to ${args.to}.`) + dim(`  Audit log: ${auditLog}`))
 
     let attachedToUserStory: boolean | undefined

@@ -16,6 +16,8 @@ export default class McPull extends Command {
 
   static override flags = {
     bu: Flags.string({description: 'Business Unit to pull (repeat for several)', required: true, multiple: true}),
+    only: Flags.string({description: 'Only pull DEs and content whose name or key starts with this prefix (repeatable)', multiple: true}),
+    'row-counts': Flags.boolean({description: 'Fetch row counts per Data Extension (needed by destructive-de-change)', default: true, allowNo: true}),
   }
 
   public async run(): Promise<{pulled: {bu: string; dataExtensions: number; content: number; dir: string}[]}> {
@@ -24,7 +26,11 @@ export default class McPull extends Command {
     const config = loadConfig(root)
     const pulled = []
     for (const name of flags.bu) {
-      const snap = await clientFor(name, requireBu(config, name), root).snapshot()
+      const snap = await clientFor(name, requireBu(config, name), root).snapshot({
+        only: flags.only,
+        rowCounts: flags['row-counts'],
+        onProgress: (m) => process.stderr.write(`  ${m}\n`),
+      })
       const {dir} = writeSnapshot(snap, root)
       const rel = path.relative(root, dir) || '.'
       this.log(`Pulled ${name}: ${snap.dataExtensions.length} Data Extensions, ${snap.content.length} content assets -> ${rel}/`)
