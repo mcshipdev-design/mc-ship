@@ -34,10 +34,15 @@ export function localExplanation(changes: AssetChange[], check: CheckResult): Ex
   const fails = check.findings.filter((f) => f.severity === 'fail')
   const warns = check.findings.filter((f) => f.severity === 'warn')
   const count = (k: string, t: string) => changes.filter((c) => c.kind === k && c.change === t).length
-  const what = [
+  const parts = [
     `${count('content', 'added')} new and ${count('content', 'changed')} changed content assets`,
     `${count('dataExtension', 'added')} new and ${count('dataExtension', 'changed')} changed Data Extensions`,
-  ].join(', ')
+  ]
+  const q = count('query', 'added') + count('query', 'changed')
+  if (q) parts.push(`${count('query', 'added')} new and ${count('query', 'changed')} changed SQL queries`)
+  const a = count('automation', 'added') + count('automation', 'changed')
+  if (a) parts.push(`${a} automation(s) to rebuild in Automation Studio`)
+  const what = parts.join(', ')
 
   const lines = [
     `Risk: ${risk.toUpperCase()}. ${

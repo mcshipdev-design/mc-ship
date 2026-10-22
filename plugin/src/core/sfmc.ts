@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import {BuConfig, loadSecret, projectRoot} from './config.js'
-import {ContentAsset, DataExtension, DeField, FieldType, Snapshot} from './types.js'
+import {Automation, AutomationActivity, ContentAsset, DataExtension, DeField, FieldType, QueryActivity, QueryUpdateType, Snapshot} from './types.js'
 
 export interface UpsertResult {
   customerKey: string
@@ -18,6 +18,8 @@ export interface SnapshotOptions {
   rowCounts?: boolean
   /** Only keep DEs and content whose name or key starts with one of these prefixes */
   only?: string[]
+  /** Pull SQL queries and automations from Automation Studio. Default true */
+  automations?: boolean
 }
 
 export function matchesOnly(item: {name: string; customerKey: string}, only?: string[]): boolean {
@@ -47,6 +49,7 @@ export interface McClient {
   snapshot(opts?: SnapshotOptions): Promise<Snapshot>
   upsertDataExtension(de: DataExtension, existing?: DataExtension): Promise<UpsertResult>
   upsertContent(asset: ContentAsset): Promise<UpsertResult>
+  upsertQuery(query: QueryActivity): Promise<UpsertResult>
 }
 
 export function clientFor(buName: string, bu: BuConfig, root = projectRoot()): McClient {
@@ -89,7 +92,21 @@ export class MockClient implements McClient {
       pulledAt: new Date().toISOString(),
       dataExtensions: s.dataExtensions.filter((d) => matchesOnly(d, opts.only)),
       content: s.content.filter((c) => matchesOnly(c, opts.only)),
+      queries: opts.automations === false ? [] : (s.queries ?? []).filter((q) => matchesOnly(q, opts.only)),
+      automations: opts.automations === false ? [] : (s.automations ?? []).filter((a) => matchesOnly(a, opts.only)),
     }
+  }
+
+  async upsertQuery(query: QueryActivity): Promise<UpsertResult> {
+    const s = this.read()
+    if (!s.dataExtensions.some((d) => d.customerKey === query.targetKey))
+      throw new Error(`Target Data Extension ${query.targetKey} not found in ${this.buName}`)
+    s.queries ??= []
+    const i = s.queries.findIndex((q) => q.customerKey === query.customerKey)
+    if (i === -1) s.queries.push(query)
+    else s.queries[i] = query
+    this.write(s)
+    return {customerKey: query.customerKey, action: i === -1 ? 'created' : 'updated'}
   }
 
   async upsertDataExtension(de: DataExtension, existing?: DataExtension): Promise<UpsertResult> {
@@ -223,11 +240,14 @@ export class LiveClient implements McClient {
     return text
   }
 
-  private async retrieveAll(objectType: string, props: string[]): Promise<string[]> {
+  private async retrieveAll(objectType: string, props: string[], filter?: {property: string; value: string}): Promise<string[]> {
     const results: string[] = []
+    const where = filter
+      ? `<Filter xsi:type="SimpleFilterPart"><Property>${xml(filter.property)}</Property><SimpleOperator>equals</SimpleOperator><Value>${xml(filter.value)}</Value></Filter>`
+      : ''
     let request =
       `<RetrieveRequestMsg xmlns="http://exacttarget.com/wsdl/partnerAPI"><RetrieveRequest>` +
-      `<ObjectType>${objectType}</ObjectType>${props.map((p) => `<Properties>${p}</Properties>`).join('')}` +
+      `<ObjectType>${objectType}</ObjectType>${props.map((p) => `<Properties>${p}</Properties>`).join('')}${where}` +
       `</RetrieveRequest></RetrieveRequestMsg>`
     for (;;) {
       const text = await this.soap('Retrieve', request)
@@ -292,6 +312,20 @@ export class LiveClient implements McClient {
       .filter((d) => matchesOnly(d, opts.only))
     say(`Found ${dataExtensions.length} Data Extensions and ${content.length} content assets.`)
 
+    let queries: QueryActivity[] = []
+    let automations: Automation[] = []
+    if (opts.automations !== false) {
+      try {
+        say('Reading Automation Studio: SQL queries and automations...')
+        queries = (await this.queryActivities()).filter((q) => matchesOnly(q, opts.only))
+        automations = (await this.automationList(say)).filter((a) => matchesOnly(a, opts.only))
+        say(`Found ${queries.length} SQL queries and ${automations.length} automations.`)
+      } catch (error) {
+        say(`Skipped Automation Studio: ${error instanceof Error ? error.message.slice(0, 200) : error}`)
+        say('Add the Automations Read scope to the installed package (Write too, to deploy queries).')
+      }
+    }
+
     if (opts.rowCounts !== false && dataExtensions.length) {
       let done = 0
       await mapLimit(dataExtensions, 8, async (de) => {
@@ -307,7 +341,108 @@ export class LiveClient implements McClient {
       pulledAt: new Date().toISOString(),
       dataExtensions,
       content,
+      queries,
+      automations,
     }
+  }
+
+  /** queryDefinitionId and folder of each query in this BU, filled by queryActivities() */
+  private queryIds = new Map<string, {id: string; categoryId?: number}>()
+
+  private async queryActivities(): Promise<QueryActivity[]> {
+    const out: QueryActivity[] = []
+    this.queryIds.clear()
+    for (let page = 1; ; page++) {
+      const r = await this.rest<{count: number; items?: RawQuery[]}>('GET', `automation/v1/queries?$page=${page}&$pageSize=200`)
+      for (const q of r.items ?? []) {
+        this.queryIds.set(q.key, {id: q.queryDefinitionId, categoryId: q.categoryId})
+        out.push({
+          kind: 'query',
+          customerKey: q.key,
+          name: q.name,
+          sql: q.queryText ?? '',
+          targetKey: q.targetKey ?? '',
+          targetName: q.targetName,
+          updateType: (q.targetUpdateTypeName as QueryUpdateType) ?? UPDATE_TYPES[q.targetUpdateTypeId ?? 0],
+        })
+      }
+      if (!r.items?.length || page * 200 >= r.count) break
+    }
+    return out
+  }
+
+  private async automationList(say: (m: string) => void): Promise<Automation[]> {
+    const list: {id: string; key?: string; name: string}[] = []
+    for (let page = 1; ; page++) {
+      const r = await this.rest<{count?: number; items?: {id: string; key?: string; name: string}[]}>(
+        'GET',
+        `automation/v1/automations?$page=${page}&$pageSize=200`,
+      )
+      list.push(...(r.items ?? []))
+      if (!r.items?.length || page * 200 >= (r.count ?? 0)) break
+    }
+    const keyById = new Map([...this.queryIds].map(([key, v]) => [v.id, key]))
+    let done = 0
+    return mapLimit(list, 6, async (item) => {
+      const a = await this.rest<RawAutomation>('GET', `automation/v1/automations/${item.id}`)
+      done++
+      if (done % 25 === 0) say(`Automations: ${done}/${list.length}`)
+      return {
+        kind: 'automation' as const,
+        customerKey: a.key ?? item.key ?? item.id,
+        name: a.name ?? item.name,
+        status: automationStatus(a.status ?? a.statusId),
+        steps: (a.steps ?? [])
+          .map((st, i) => ({
+            step: st.step ?? i + 1,
+            activities: (st.activities ?? []).map((act): AutomationActivity => {
+              const type = ACTIVITY_TYPES[act.objectTypeId ?? -1] ?? `type ${act.objectTypeId}`
+              const key = type === 'query' && act.activityObjectId ? keyById.get(act.activityObjectId) : undefined
+              return key ? {type, name: act.name, key} : {type, name: act.name}
+            }),
+          }))
+          .sort((x, y) => x.step - y.step),
+      }
+    })
+  }
+
+  async upsertQuery(query: QueryActivity): Promise<UpsertResult> {
+    if (!this.queryIds.size) await this.queryActivities()
+    const target = await this.deObjectId(query.targetKey)
+    if (!target) throw new Error(`Target Data Extension ${query.targetKey} not found in ${this.buName}`)
+    const body: Record<string, unknown> = {
+      name: query.name,
+      key: query.customerKey,
+      queryText: query.sql,
+      targetKey: query.targetKey,
+      targetName: target.name,
+      targetId: target.objectId,
+      targetUpdateTypeId: UPDATE_TYPES.indexOf(query.updateType),
+    }
+    const existing = this.queryIds.get(query.customerKey)
+    if (existing) {
+      await this.rest('PATCH', `automation/v1/queries/${existing.id}`, body)
+      return {customerKey: query.customerKey, action: 'updated'}
+    }
+    body.categoryId = await this.queryFolderId()
+    const created = await this.rest<RawQuery>('POST', 'automation/v1/queries', body)
+    if (created.queryDefinitionId) this.queryIds.set(query.customerKey, {id: created.queryDefinitionId, categoryId: body.categoryId as number})
+    return {customerKey: query.customerKey, action: 'created', note: 'created in the Query root folder'}
+  }
+
+  private async deObjectId(customerKey: string): Promise<{objectId: string; name: string} | undefined> {
+    const rows = await this.retrieveAll('DataExtension', ['ObjectID', 'CustomerKey', 'Name'], {property: 'CustomerKey', value: customerKey})
+    const row = rows[0]
+    return row ? {objectId: tag(row, 'ObjectID') ?? '', name: unxml(tag(row, 'Name') ?? customerKey)} : undefined
+  }
+
+  /** Root folder for Query Activities in this BU */
+  private async queryFolderId(): Promise<number> {
+    const rows = await this.retrieveAll('DataFolder', ['ID', 'Name', 'ParentFolder.ID', 'ContentType'], {property: 'ContentType', value: 'queryactivity'})
+    const root = rows.find((r) => /<ParentFolder>[\s\S]*?<ID>0<\/ID>/.test(r)) ?? rows[0]
+    const id = Number(root ? tag(root, 'ID') : NaN)
+    if (!Number.isFinite(id)) throw new Error('No Query Activity folder found in this BU')
+    return id
   }
 
   private async rowCount(customerKey: string): Promise<number | undefined> {
@@ -402,6 +537,60 @@ export class LiveClient implements McClient {
         .join('. '),
     }
   }
+}
+
+const UPDATE_TYPES: QueryUpdateType[] = ['Overwrite', 'Update', 'Append']
+
+/** Automation Studio activity objectTypeId values */
+const ACTIVITY_TYPES: Record<number, string> = {
+  300: 'query',
+  423: 'script',
+  43: 'import',
+  42: 'email',
+  53: 'filetransfer',
+  73: 'dataextract',
+  303: 'filter',
+  467: 'wait',
+  749: 'journey',
+}
+
+const AUTOMATION_STATUS: Record<number, string> = {
+  [-1]: 'Error',
+  0: 'BuildError',
+  1: 'Building',
+  2: 'Ready',
+  3: 'Running',
+  4: 'Paused',
+  5: 'Stopped',
+  6: 'Scheduled',
+  7: 'AwaitingTrigger',
+  8: 'InactiveTrigger',
+}
+
+function automationStatus(s: unknown): string | undefined {
+  if (typeof s === 'number') return AUTOMATION_STATUS[s] ?? String(s)
+  return typeof s === 'string' ? s : undefined
+}
+
+interface RawQuery {
+  queryDefinitionId: string
+  key: string
+  name: string
+  queryText?: string
+  targetKey?: string
+  targetName?: string
+  targetUpdateTypeName?: string
+  targetUpdateTypeId?: number
+  categoryId?: number
+}
+
+interface RawAutomation {
+  id: string
+  key?: string
+  name?: string
+  status?: number | string
+  statusId?: number
+  steps?: {step?: number; activities?: {name: string; activityObjectId?: string; objectTypeId?: number}[]}[]
 }
 
 interface RawAsset {

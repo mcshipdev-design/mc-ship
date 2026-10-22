@@ -13,7 +13,7 @@ export function changeLines(changes: AssetChange[]): string[] {
   const sym: Record<string, string> = {added: green('+'), changed: yellow('~'), removed: red('-'), unchanged: ' '}
   const out: string[] = []
   for (const c of changes) {
-    const kind = c.kind === 'dataExtension' ? 'DE     ' : 'Content'
+    const kind = {dataExtension: 'DE        ', content: 'Content   ', query: 'Query     ', automation: 'Automation'}[c.kind]
     out.push(`  ${sym[c.change]} ${kind}  ${c.name} ${dim(`(${c.customerKey})`)}  ${dim(c.change)}`)
     for (const d of c.details) out.push(dim(`        ${d}`))
   }

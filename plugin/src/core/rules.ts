@@ -1,7 +1,8 @@
 import {blockReferences, deReferences, findCalls, literal} from './ampscript.js'
 import {diffSnapshots} from './diff.js'
 import {fieldChangesNeedingRebuild} from './sfmc.js'
-import {AssetChange, CheckResult, ContentAsset, DataExtension, Finding, Snapshot} from './types.js'
+import {tableRefs, usesSelectStar} from './sql.js'
+import {AssetChange, Automation, CheckResult, ContentAsset, DataExtension, Finding, QueryActivity, Snapshot} from './types.js'
 
 export interface RuleContext {
   source: Snapshot
@@ -10,8 +11,11 @@ export interface RuleContext {
   /** Content and DEs that will be shipped (added or changed) */
   shippedContent: ContentAsset[]
   shippedDes: DataExtension[]
+  shippedQueries: QueryActivity[]
+  /** Automations that are new or changed in the source (MC Ship does not deploy them) */
+  changedAutomations: Automation[]
   /** What the target BU will look like after the deploy */
-  after: {dataExtensions: DataExtension[]; content: ContentAsset[]}
+  after: {dataExtensions: DataExtension[]; content: ContentAsset[]; queries: QueryActivity[]}
 }
 
 export interface Rule {
@@ -242,6 +246,115 @@ export const destructiveDeChange: Rule = {
   },
 }
 
+// ---------------- Automation Studio ----------------
+
+/** 7. A query must write to a Data Extension that exists after the deploy */
+export const queryTarget: Rule = {
+  id: 'query-target-exists',
+  title: 'Query target Data Extension exists',
+  run(ctx) {
+    return ctx.shippedQueries
+      .filter((q) => !findDe(ctx.after.dataExtensions, q.targetKey) && !(q.targetName && findDe(ctx.after.dataExtensions, q.targetName)))
+      .map((q) => ({
+        rule: this.id,
+        severity: 'fail' as const,
+        asset: q.customerKey,
+        message: `Writes to Data Extension "${q.targetName ?? q.targetKey}", which will not exist in ${ctx.target.bu}`,
+        fix: 'Ship the target Data Extension in the same release, or point the query at an existing one',
+      }))
+  },
+}
+
+/** 8. Every DE a query reads must exist (system data views and ENT. DEs excepted) */
+export const queryDeReference: Rule = {
+  id: 'query-de-reference',
+  title: 'Query reads only Data Extensions that exist',
+  run(ctx) {
+    const out: Finding[] = []
+    for (const q of ctx.shippedQueries) {
+      const seen = new Set<string>()
+      for (const r of tableRefs(q.sql)) {
+        if (r.systemView || r.ent || seen.has(r.name.toLowerCase())) continue
+        seen.add(r.name.toLowerCase())
+        if (!findDe(ctx.after.dataExtensions, r.name)) {
+          out.push({
+            rule: this.id,
+            severity: 'fail',
+            asset: q.customerKey,
+            message: `Line ${r.line} reads "${r.name}", which is not a Data Extension in ${ctx.target.bu}`,
+            fix: 'Ship that Data Extension too, fix the name, or use ENT.<name> for a shared DE',
+          })
+        }
+      }
+    }
+    return out
+  },
+}
+
+/** 9. "Update" needs a primary key on the target, or Marketing Cloud rejects the run */
+export const queryUpdateKey: Rule = {
+  id: 'query-update-needs-key',
+  title: 'Update queries target a DE with a primary key',
+  run(ctx) {
+    const out: Finding[] = []
+    for (const q of ctx.shippedQueries.filter((x) => x.updateType === 'Update')) {
+      const de = findDe(ctx.after.dataExtensions, q.targetKey) ?? (q.targetName ? findDe(ctx.after.dataExtensions, q.targetName) : undefined)
+      if (de && !de.fields.some((f) => f.isPrimaryKey)) {
+        out.push({
+          rule: this.id,
+          severity: 'fail',
+          asset: q.customerKey,
+          message: `Data action is Update, but "${de.name}" has no primary key`,
+          fix: 'Add a primary key to the target DE, or use Overwrite or Append',
+        })
+      }
+    }
+    return out
+  },
+}
+
+/** 10. SELECT * silently breaks when either DE gains or loses a field */
+export const querySelectStar: Rule = {
+  id: 'query-select-star',
+  title: 'Queries name their columns',
+  run(ctx) {
+    return ctx.shippedQueries
+      .filter((q) => usesSelectStar(q.sql))
+      .map((q) => ({
+        rule: this.id,
+        severity: 'warn' as const,
+        asset: q.customerKey,
+        message: 'Uses SELECT *: the query fails or loses data when a field is added to the source or target DE',
+        fix: 'List the target columns by name',
+      }))
+  },
+}
+
+/** 11. A changed automation must only run queries that will exist in the target */
+export const automationQueries: Rule = {
+  id: 'automation-missing-query',
+  title: 'Automations run queries that exist',
+  run(ctx) {
+    const out: Finding[] = []
+    for (const a of ctx.changedAutomations) {
+      for (const st of a.steps) {
+        for (const act of st.activities.filter((x) => x.type === 'query' && x.key)) {
+          if (!ctx.after.queries.some((q) => q.customerKey === act.key)) {
+            out.push({
+              rule: this.id,
+              severity: 'fail',
+              asset: a.customerKey,
+              message: `Step ${st.step} runs query "${act.name}" (${act.key}), which will not exist in ${ctx.target.bu}`,
+              fix: 'Ship the query in this release before rebuilding the automation',
+            })
+          }
+        }
+      }
+    }
+    return out
+  },
+}
+
 export const RULES: Rule[] = [
   hardcodedBuValues,
   brokenDeReference,
@@ -249,6 +362,11 @@ export const RULES: Rule[] = [
   piiAndSendability,
   missingContentBlock,
   destructiveDeChange,
+  queryTarget,
+  queryDeReference,
+  queryUpdateKey,
+  querySelectStar,
+  automationQueries,
 ]
 
 export function buildContext(source: Snapshot, target: Snapshot): RuleContext {
@@ -256,6 +374,8 @@ export function buildContext(source: Snapshot, target: Snapshot): RuleContext {
   const shipKeys = new Set(changes.filter((c) => c.change === 'added' || c.change === 'changed').map((c) => `${c.kind}:${c.customerKey}`))
   const shippedDes = source.dataExtensions.filter((d) => shipKeys.has(`dataExtension:${d.customerKey}`))
   const shippedContent = source.content.filter((c) => shipKeys.has(`content:${c.customerKey}`))
+  const shippedQueries = (source.queries ?? []).filter((q) => shipKeys.has(`query:${q.customerKey}`))
+  const changedAutomations = (source.automations ?? []).filter((a) => shipKeys.has(`automation:${a.customerKey}`))
   const merge = <T extends {customerKey: string}>(live: T[], shipped: T[]) => [
     ...live.filter((l) => !shipped.some((s) => s.customerKey === l.customerKey)),
     ...shipped,
@@ -266,7 +386,13 @@ export function buildContext(source: Snapshot, target: Snapshot): RuleContext {
     changes,
     shippedDes,
     shippedContent,
-    after: {dataExtensions: merge(target.dataExtensions, shippedDes), content: merge(target.content, shippedContent)},
+    shippedQueries,
+    changedAutomations,
+    after: {
+      dataExtensions: merge(target.dataExtensions, shippedDes),
+      content: merge(target.content, shippedContent),
+      queries: merge(target.queries ?? [], shippedQueries),
+    },
   }
 }
 

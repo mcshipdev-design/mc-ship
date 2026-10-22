@@ -44,6 +44,40 @@ export interface ContentAsset {
 
 export type Asset = DataExtension | ContentAsset
 
+// ---------------- Automation Studio ----------------
+
+export type QueryUpdateType = 'Overwrite' | 'Update' | 'Append'
+
+/** A SQL Query Activity. Deployed by MC Ship. */
+export interface QueryActivity {
+  kind: 'query'
+  customerKey: string
+  name: string
+  /** The SQL text */
+  sql: string
+  /** Customer key of the target Data Extension */
+  targetKey: string
+  targetName?: string
+  updateType: QueryUpdateType
+}
+
+export interface AutomationActivity {
+  /** query, script, import, email, filetransfer, dataextract, filter, wait, or "type <id>" */
+  type: string
+  name: string
+  /** Customer key of the activity when MC Ship knows it (queries) */
+  key?: string
+}
+
+/** An Automation Studio automation. Pulled, diffed and checked; never deployed by MC Ship. */
+export interface Automation {
+  kind: 'automation'
+  customerKey: string
+  name: string
+  status?: string
+  steps: {step: number; activities: AutomationActivity[]}[]
+}
+
 export interface Snapshot {
   bu: string
   /** Marketing Cloud account / MID of the BU, if known */
@@ -51,12 +85,14 @@ export interface Snapshot {
   pulledAt?: string
   dataExtensions: DataExtension[]
   content: ContentAsset[]
+  queries?: QueryActivity[]
+  automations?: Automation[]
 }
 
 export type ChangeType = 'added' | 'changed' | 'removed' | 'unchanged'
 
 export interface AssetChange {
-  kind: Asset['kind']
+  kind: Asset['kind'] | 'query' | 'automation'
   customerKey: string
   name: string
   change: ChangeType

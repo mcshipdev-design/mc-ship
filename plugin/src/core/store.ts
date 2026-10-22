@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import {loadConfig, projectRoot} from './config.js'
-import {ContentAsset, DataExtension, Snapshot} from './types.js'
+import {Automation, ContentAsset, DataExtension, QueryActivity, Snapshot} from './types.js'
 
 /**
  * Pulled assets live in Git as readable files:
@@ -10,6 +10,9 @@ import {ContentAsset, DataExtension, Snapshot} from './types.js'
  *   mc/<BU>/dataextensions/<key>.json
  *   mc/<BU>/content/<key>.json   (metadata)
  *   mc/<BU>/content/<key>.html   (HTML + AMPscript body)
+ *   mc/<BU>/queries/<key>.json   (SQL Query Activity metadata)
+ *   mc/<BU>/queries/<key>.sql    (the SQL)
+ *   mc/<BU>/automations/<key>.json
  */
 export function buDir(bu: string, root = projectRoot()): string {
   return path.join(root, loadConfig(root).srcDir, bu)
@@ -36,6 +39,22 @@ export function writeSnapshot(s: Snapshot, root = projectRoot()): {dir: string; 
     fs.writeFileSync(path.join(dir, 'content', `${safe(c.customerKey)}.html`), content)
     files += 2
   }
+  if (s.queries?.length) {
+    fs.mkdirSync(path.join(dir, 'queries'), {recursive: true})
+    for (const q of sortByKey(s.queries)) {
+      const {sql, ...meta} = q
+      fs.writeFileSync(path.join(dir, 'queries', `${safe(q.customerKey)}.json`), JSON.stringify(meta, null, 2) + '\n')
+      fs.writeFileSync(path.join(dir, 'queries', `${safe(q.customerKey)}.sql`), sql.endsWith('\n') ? sql : sql + '\n')
+      files += 2
+    }
+  }
+  if (s.automations?.length) {
+    fs.mkdirSync(path.join(dir, 'automations'), {recursive: true})
+    for (const a of sortByKey(s.automations)) {
+      fs.writeFileSync(path.join(dir, 'automations', `${safe(a.customerKey)}.json`), JSON.stringify(a, null, 2) + '\n')
+      files++
+    }
+  }
   return {dir, files}
 }
 
@@ -51,7 +70,13 @@ export function readSnapshot(bu: string, root = projectRoot()): Snapshot {
     const html = f.replace(/\.json$/, '.html')
     return {...m, content: fs.existsSync(html) ? fs.readFileSync(html, 'utf8') : ''} as ContentAsset
   })
-  return {bu, mid: meta.mid, pulledAt: meta.pulledAt, dataExtensions, content}
+  const queries = listJson(path.join(dir, 'queries')).map((f) => {
+    const m = readJson<Omit<QueryActivity, 'sql'>>(f)
+    const sql = f.replace(/\.json$/, '.sql')
+    return {...m, sql: fs.existsSync(sql) ? fs.readFileSync(sql, 'utf8') : ''} as QueryActivity
+  })
+  const automations = listJson(path.join(dir, 'automations')).map((f) => readJson<Automation>(f))
+  return {bu, mid: meta.mid, pulledAt: meta.pulledAt, dataExtensions, content, queries, automations}
 }
 
 function listJson(dir: string): string[] {
