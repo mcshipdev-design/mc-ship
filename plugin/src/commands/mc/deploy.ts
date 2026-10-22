@@ -26,7 +26,7 @@ interface DeployResult {
 
 export default class McDeploy extends Command {
   static override description =
-    'Deploy the source BU (as stored in Git) to the target BU. Refreshes the target first, re-runs every policy check, blocks on failures, writes an audit log and can attach a release note to a Copado user story. Never deletes anything in the target.'
+    'Deploy the source BU (as stored in Git) to the target BU: Data Extensions, SQL queries and Content Builder assets. Refreshes the target first, re-runs every policy check, blocks on failures, writes an audit log and can attach a release note to a Copado user story. Never deletes anything in the target. Automations are checked but not deployed.'
 
   static override examples = [
     '<%= config.bin %> <%= command.id %> DEV PROD --dry-run',
@@ -65,16 +65,17 @@ export default class McDeploy extends Command {
     // 2. What changes, and is it safe?
     const changes = diffSnapshots(source, live)
     const ship = changes.filter((c) => c.change === 'added' || c.change === 'changed')
+    const deployable = ship.filter((c) => c.kind !== 'automation')
     const check = runChecks(source, live)
-    this.log(bold(`Release ${args.from} -> ${args.to}: ${ship.length} asset(s) to deploy`))
+    this.log(bold(`Release ${args.from} -> ${args.to}: ${deployable.length} asset(s) to deploy`))
     for (const l of changeLines(ship)) this.log(l)
     this.log('')
     for (const l of checkLines(check)) this.log(l)
     this.log('')
 
     const base = {from: args.from, to: args.to, check, changes, results: [] as UpsertResult[]}
-    if (!ship.length) {
-      this.log('Nothing to deploy.')
+    if (!deployable.length) {
+      this.log(ship.length ? 'Nothing MC Ship can deploy: only automations changed. Rebuild them in Automation Studio.' : 'Nothing to deploy.')
       return {...base, status: 'nothing-to-deploy'}
     }
     if (check.status === 'fail' && !flags.force) {
@@ -89,17 +90,20 @@ export default class McDeploy extends Command {
     if (!flags.yes) {
       if (this.jsonEnabled() || !process.stdin.isTTY) this.error('Pass --yes to deploy non-interactively.')
       const rl = readline.createInterface({input: process.stdin, output: process.stdout})
-      const answer = await rl.question(`Deploy ${ship.length} asset(s) to ${args.to}? (y/N) `)
+      const answer = await rl.question(`Deploy ${deployable.length} asset(s) to ${args.to}? (y/N) `)
       rl.close()
       if (!/^y(es)?$/i.test(answer.trim())) return {...base, status: 'cancelled'}
     }
 
-    // 3. Deploy: DEs first, then blocks and templates, then emails (dependencies first)
+    // 3. Deploy: DEs first, then SQL queries (they write to DEs), then blocks and templates, then emails
     const keys = new Set(ship.map((c) => `${c.kind}:${c.customerKey}`))
     const results: UpsertResult[] = []
     for (const de of source.dataExtensions.filter((d) => keys.has(`dataExtension:${d.customerKey}`))) {
       const existing = live.dataExtensions.find((d) => d.customerKey === de.customerKey)
       results.push(await safely(de.customerKey, () => target.upsertDataExtension(de, existing)))
+    }
+    for (const q of (source.queries ?? []).filter((x) => keys.has(`query:${x.customerKey}`))) {
+      results.push(await safely(q.customerKey, () => target.upsertQuery(q)))
     }
     const order = {htmlblock: 0, template: 1, htmlemail: 2}
     const content = source.content
@@ -107,10 +111,14 @@ export default class McDeploy extends Command {
       .sort((a, b) => order[a.assetType] - order[b.assetType])
     for (const c of content) results.push(await safely(c.customerKey, () => target.upsertContent(c)))
 
+    const automations = ship.filter((c) => c.kind === 'automation')
     for (const r of results) {
       const badge = r.action === 'failed' ? red('FAIL') : r.action === 'skipped' ? dim('skip') : green('ok  ')
       this.log(`  ${badge}  ${r.customerKey}  ${dim(r.action)}${r.note ? (r.action === 'failed' ? `  ${r.note}` : dim(`  ${r.note}`)) : ''}`)
     }
+
+    if (automations.length)
+      this.log(dim(`  Not deployed (rebuild in Automation Studio): ${automations.map((a) => a.name).join(', ')}`))
 
     // 4. Record it
     const auditLog = appendAudit(
