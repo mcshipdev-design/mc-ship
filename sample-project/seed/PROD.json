@@ -75,5 +75,36 @@
       "subject": "Welcome to Northwind, %%FirstName%%",
       "content": "%%[ SET @first = AttributeValue(\"FirstName\") ]%%\n%%=ContentBlockByKey(\"brand-header\")=%%\n<p>Hi %%=v(@first)=%%, welcome aboard.</p>\n<p><a href=\"%%unsub_center_url%%\">Unsubscribe</a></p>\n<p>%%Member_Busname%%, %%Member_Addr%%, %%Member_City%%</p>\n"
     }
+  ],
+  "queries": [
+    {
+      "kind": "query",
+      "customerKey": "subscribers-sync",
+      "name": "Subscribers Sync",
+      "sql": "SELECT s.SubscriberKey, s.EmailAddress\nFROM _Subscribers s\nWHERE s.Status = 'active'\n",
+      "targetKey": "Subscribers_Master",
+      "targetName": "Subscribers_Master",
+      "updateType": "Update"
+    }
+  ],
+  "automations": [
+    {
+      "kind": "automation",
+      "customerKey": "nightly-subscriber-sync",
+      "name": "Nightly Subscriber Sync",
+      "status": "Scheduled",
+      "steps": [
+        {
+          "step": 1,
+          "activities": [
+            {
+              "type": "query",
+              "name": "Subscribers Sync",
+              "key": "subscribers-sync"
+            }
+          ]
+        }
+      ]
+    }
   ]
 }

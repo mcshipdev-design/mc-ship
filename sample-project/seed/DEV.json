@@ -129,5 +129,63 @@
       "subject": "%%FirstName%%, your spring offer is here",
       "content": "%%[\n  SET @sk = _subscriberkey\n  SET @code = Lookup(\"Spring_Promo_Offers\", \"OfferCode\", \"SubscriberKey\", @sk)\n  SET @banner = Lookup(\"Spring_Promo_Offers\", \"PromoBanner\", \"SubscriberKey\", @sk)\n  SET @tier = Lookup(\"Loyalty_Members\", \"Tier\", \"SubscriberKey\", @sk)\n]%%\n%%=ContentBlockById(48211)=%%\n<img src=\"%%=v(@banner)=%%\" width=\"600\" alt=\"Spring sale\">\n<h1>Spring sale: your code is %%=v(@code)=%%</h1>\n<p>As a %%=v(@tier)=%% member you get early access.</p>\n%%=ContentBlockByKey(\"promo-footer\")=%%\n"
     }
+  ],
+  "queries": [
+    {
+      "kind": "query",
+      "customerKey": "subscribers-sync",
+      "name": "Subscribers Sync",
+      "sql": "SELECT s.SubscriberKey, s.EmailAddress\nFROM _Subscribers s\nWHERE s.Status = 'active'\n",
+      "targetKey": "Subscribers_Master",
+      "targetName": "Subscribers_Master",
+      "updateType": "Update"
+    },
+    {
+      "kind": "query",
+      "customerKey": "spring-promo-audience",
+      "name": "Spring Promo Audience",
+      "sql": "SELECT l.SubscriberKey,\n       'SPRING25' AS OfferCode,\n       25 AS DiscountPct,\n       DATEADD(day, 30, GETDATE()) AS ExpiryDate\nFROM Loyalty_Members l\nINNER JOIN Subscribers_Master s ON s.SubscriberKey = l.SubscriberKey\nWHERE l.Tier IN ('Gold', 'Platinum')\n",
+      "targetKey": "Spring_Promo_Offers",
+      "targetName": "Spring_Promo_Offers",
+      "updateType": "Overwrite"
+    }
+  ],
+  "automations": [
+    {
+      "kind": "automation",
+      "customerKey": "nightly-subscriber-sync",
+      "name": "Nightly Subscriber Sync",
+      "status": "Scheduled",
+      "steps": [
+        {
+          "step": 1,
+          "activities": [
+            {
+              "type": "query",
+              "name": "Subscribers Sync",
+              "key": "subscribers-sync"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "automation",
+      "customerKey": "spring-promo-daily",
+      "name": "Spring Promo Daily",
+      "status": "Ready",
+      "steps": [
+        {
+          "step": 1,
+          "activities": [
+            {
+              "type": "query",
+              "name": "Spring Promo Audience",
+              "key": "spring-promo-audience"
+            }
+          ]
+        }
+      ]
+    }
   ]
 }
