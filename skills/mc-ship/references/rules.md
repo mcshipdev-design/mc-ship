@@ -10,12 +10,17 @@ Each rule returns findings with a severity. `fail` blocks `mc deploy`. `warn` is
 | `pii-and-sendability` | fail / warn | Sendable DE whose send field is missing (fail); email or phone stored as Text, sensitive fields (birth date, SSN, passport, tax ID) with no retention policy (warn) | Use EmailAddress / Phone types; set row-based retention |
 | `missing-content-block` | fail / warn | `ContentBlockByKey` to a block that is not in the target or the release (fail); `ContentBlockByName` with no block of that name (warn) | Add the block to the release; prefer keys over names |
 | `destructive-de-change` | fail / warn | Field removed, type changed, length reduced or primary key changed on an existing DE: fail when it holds rows, warn when empty | Add a new field instead, or rebuild the DE by hand with a backup |
+| `query-target-exists` | fail | A SQL Query Activity writes to a DE that will not exist in the target | Ship the target DE in the same release, or fix the target |
+| `query-de-reference` | fail | A query reads (`FROM` / `JOIN`) a DE that will not exist in the target. System data views (`_Sent`, `_Open`...) and `ENT.` DEs are skipped | Ship the DE, fix the name, or use `ENT.<name>` for a shared DE |
+| `query-update-needs-key` | fail | Data action *Update* on a target DE with no primary key (Marketing Cloud rejects the run) | Add a primary key, or use Overwrite / Append |
+| `query-select-star` | warn | `SELECT *` or `alias.*`: fails or drops data when either DE gains or loses a field | List the target columns by name |
+| `automation-missing-query` | fail | A new or changed automation runs a query that will not exist in the target | Ship the query in this release, then rebuild the automation |
 
 ## How checks see the release
 
 - Source = the files under `mc/<source BU>/` (what you will deploy).
 - Target = the last pull of the target BU. `mc deploy` always refreshes it first.
-- Only added or changed assets are checked. The "after" view merges the release into the target, so a DE or block shipped in the same release counts as present.
+- Only added or changed assets (DEs, content, SQL queries, automations) are checked. The "after" view merges the release into the target, so a DE or block shipped in the same release counts as present.
 
 ## Running a subset
 
