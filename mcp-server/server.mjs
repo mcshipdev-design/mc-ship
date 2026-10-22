@@ -59,7 +59,7 @@ export function createServer() {
     {
       title: 'Pull Marketing Cloud BUs into Git',
       description:
-        'Pull Data Extensions (schema and row counts) and Content Builder emails, blocks and templates from one or more BUs into the project as files. Run this for both source and target before diff or check.',
+        'Pull Data Extensions (schema and row counts), Content Builder emails, blocks and templates, and Automation Studio SQL queries and automations from one or more BUs into the project as files. Run this for both source and target before diff or check.',
       inputSchema: {bus: z.array(z.string().min(1)).min(1).describe('BUs to pull, e.g. ["DEV","PROD"]')},
       annotations: {readOnlyHint: false, destructiveHint: false, idempotentHint: true},
     },
@@ -82,7 +82,7 @@ export function createServer() {
     {
       title: 'Run release policy checks',
       description:
-        'Run the six MC Ship policy checks on a release. Returns status pass, warn or fail and findings, each with a suggested fix. A fail blocks deploy.',
+        'Run the eleven MC Ship policy checks on a release (content, Data Extensions, SQL queries, automations). Returns status pass, warn or fail and findings, each with a suggested fix. A fail blocks deploy.',
       inputSchema: {from: bu('Source'), to: bu('Target')},
       annotations: {readOnlyHint: true},
     },
@@ -122,7 +122,7 @@ export function createServer() {
     {
       title: 'Deploy a release to the target BU',
       description:
-        'Deploy added and changed assets from the source BU (local files) to the target BU. Refreshes the target, re-runs checks and refuses on fail. Defaults to a dry run. To really deploy, set dryRun=false AND confirm=true, and only after a human has approved the plan shown by the dry run.',
+        'Deploy added and changed Data Extensions, SQL queries and content from the source BU (local files) to the target BU. Automations are checked but never deployed. Refreshes the target, re-runs checks and refuses on fail. Defaults to a dry run. To really deploy, set dryRun=false AND confirm=true, and only after a human has approved the plan shown by the dry run.',
       inputSchema: {
         from: bu('Source'),
         to: bu('Target'),
