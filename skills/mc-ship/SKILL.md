@@ -1,6 +1,6 @@
 ---
 name: mc-ship
-description: Use this skill when moving Salesforce Marketing Cloud (SFMC) work between Business Units or orgs with the MC Ship Agentia plugin or MCP tools: pulling Data Extensions and Content Builder emails, blocks and templates into Git, diffing DEV vs PROD, running release policy checks, explaining release risk, and deploying with an audit trail linked to a Copado user story. Use it whenever the user asks to ship, promote, release, compare or check Marketing Cloud assets.
+description: Use this skill when moving Salesforce Marketing Cloud (SFMC) work between Business Units or orgs with the MC Ship Agentia plugin or MCP tools: pulling Data Extensions, Content Builder emails, blocks and templates, and Automation Studio SQL queries and automations into Git, diffing DEV vs PROD, running release policy checks, explaining release risk, and deploying with an audit trail linked to a Copado user story. Use it whenever the user asks to ship, promote, release, compare or check Marketing Cloud assets.
 ---
 
 # MC Ship: Marketing Cloud releases with Agentia
@@ -34,6 +34,7 @@ Prefer the MC Ship MCP tools (`mc_status`, `mc_pull`, `mc_diff`, `mc_check`, `mc
 
 - Never pass `--force` or deploy over a failing check unless the user explicitly says so for this release. Forced deploys are logged.
 - MC Ship never deletes assets in the target. If the diff shows `removed`, tell the user it must be done by hand.
+- MC Ship deploys SQL queries but never automations. If an automation is new or changed, tell the user to rebuild or re-point it in Automation Studio after the deploy, and never offer to start, pause or schedule one.
 - Field type, length and primary key changes on existing DEs are not applied by the API. The check flags them; suggest adding a new field instead.
 - Do not edit files under `mc/<target BU>/`. They mirror the live target and are overwritten on every pull and deploy.
 - Keep secrets out of output, files and commits.
