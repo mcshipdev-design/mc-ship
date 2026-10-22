@@ -2,7 +2,7 @@
 
 **Git-based, policy-checked Salesforce Marketing Cloud releases, built on Copado Agentia CLI.**
 
-Marketing Cloud teams still move Data Extensions and Content Builder emails between Business Units by hand. There is no diff, no review and no audit trail, and mistakes such as a broken `Lookup` or a missing unsubscribe link only show up after a send.
+Marketing Cloud teams still move Data Extensions, Content Builder emails and Automation Studio SQL between Business Units by hand. There is no diff, no review and no audit trail, and mistakes such as a broken `Lookup` or a missing unsubscribe link only show up after a send.
 
 MC Ship brings Marketing Cloud into the same terminal-first DevOps flow as core Salesforce, through all three Agentia extension points:
 
@@ -19,7 +19,7 @@ flowchart TB
   dev[Developer in terminal] --> plugin
   agent[AI coding agent<br/>follows SKILL.md] --> mcp[MC Ship MCP server] --> plugin
   subgraph plugin[MC Ship plugin on Agentia CLI]
-    client[SFMC client<br/>REST + SOAP] --- rules[Rules engine<br/>6 policy checks] --- explain[Explain<br/>Copado AI]
+    client[SFMC client<br/>REST + SOAP] --- rules[Rules engine<br/>11 policy checks] --- explain[Explain<br/>Copado AI]
   end
   plugin --> devbu[SFMC DEV BU] & prodbu[SFMC PROD BU] & git[Git repo<br/>assets + audit log] & copado[Copado user story]
 ```
@@ -37,7 +37,7 @@ npm install && npm run build && agentia plugins link .
 # 3. Demo project with two mock BUs (DEV, PROD), pulled into Git
 cd .. && bash demo/reset.sh /tmp/mc-ship-demo && cd /tmp/mc-ship-demo
 
-agentia mc diff DEV PROD        # 4 changes
+agentia mc diff DEV PROD        # 6 changes: DEs, content, a SQL query, an automation
 agentia mc check DEV PROD       # FAIL: 4 blocking issues, 2 warnings
 agentia mc explain DEV PROD     # plain-English risk note
 agentia mc deploy DEV PROD      # blocked
@@ -49,7 +49,7 @@ agentia mc deploy DEV PROD      # deployed, audit log written
 
 ## Connect a real Business Unit
 
-Create an **installed package** in Marketing Cloud with a server-to-server API integration and these scopes: Email read/write, Saved Content read/write, Documents and Images read/write, Data Extensions read/write.
+Create an **installed package** in Marketing Cloud with a server-to-server API integration and these scopes: Email read/write, Saved Content read/write, Documents and Images read/write, Data Extensions read/write, Automations read/write (read is enough to pull and check queries and automations).
 
 ```bash
 MCSHIP_CLIENT_SECRET='<secret>' agentia mc connect DEV \
@@ -64,15 +64,15 @@ MCSHIP_CLIENT_SECRET='<secret>' agentia mc connect DEV \
 | Command | What it does |
 | --- | --- |
 | `agentia mc connect <BU>` | Connect a BU (live installed package, or `--mock` JSON for demos and CI) |
-| `agentia mc pull --bu <BU>...` | Export DE schemas (+ row counts) and Content Builder emails, blocks, templates into `mc/<BU>/` |
+| `agentia mc pull --bu <BU>...` | Export DE schemas (+ row counts), Content Builder emails, blocks, templates, and Automation Studio SQL queries and automations into `mc/<BU>/`; `--no-automations` to skip |
 | `agentia mc diff <from> <to>` | Added / changed / removed assets with field-level detail |
-| `agentia mc check <from> <to>` | Six policy rules; exit code 1 on fail, so it can gate CI |
+| `agentia mc check <from> <to>` | Eleven policy rules; exit code 1 on fail, so it can gate CI |
 | `agentia mc explain <from> <to>` | Plain-English risk summary and release note (Copado AI, offline fallback); `--user-story X --attach` |
-| `agentia mc deploy <from> <to>` | Refresh target, re-check, block on fail, deploy, audit log, update user story; `--dry-run`, `--yes` |
+| `agentia mc deploy <from> <to>` | Refresh target, re-check, block on fail, deploy DEs, SQL queries and content, audit log, update user story; `--dry-run`, `--yes` |
 
 Every command supports `--json`.
 
-### The six checks
+### The checks
 
 | Rule | Catches |
 | --- | --- |
@@ -82,6 +82,15 @@ Every command supports `--json`.
 | `pii-and-sendability` | Broken send relationship, email/phone typed as Text, sensitive fields with no retention |
 | `missing-content-block` | `ContentBlockByKey` to a block not in the target or the release |
 | `destructive-de-change` | Type, length or primary key changes on DEs that hold data |
+| `query-target-exists` | A SQL query writes to a DE that won't exist in the target |
+| `query-de-reference` | A SQL query reads a DE that won't exist (data views like `_Sent` and `ENT.` DEs are skipped) |
+| `query-update-needs-key` | Data action *Update* on a target DE with no primary key |
+| `query-select-star` | `SELECT *`, which breaks when either DE gains or loses a field (warning) |
+| `automation-missing-query` | A changed automation runs a query that won't exist in the target |
+
+### Automation Studio
+
+`pull` saves each SQL Query Activity as `mc/<BU>/queries/<key>.sql` plus a small JSON file (target DE, data action), and each automation as `mc/<BU>/automations/<key>.json` (status and the activities in each step). `diff` shows SQL, target, data action, status and step changes. `deploy` creates or updates SQL queries (after the DEs they write to, before content). Automations are checked but never deployed: rebuild or re-point them in Automation Studio once the queries are in place.
 
 Details and fixes: [skills/mc-ship/references/rules.md](skills/mc-ship/references/rules.md).
 
@@ -115,7 +124,7 @@ Then ask: *"Ship the spring promo email from DEV to PROD and link it to US-00012
 ## Design notes
 
 - **Git is the source of truth.** `mc/<source BU>/` holds what gets deployed. `mc/<target BU>/` mirrors the live target and is refreshed on every deploy.
-- **Safe by default.** Deploy never deletes, never changes field types on DEs with data, refuses on failed checks, and logs every deploy (including forced ones) to `mc/audit.log.jsonl`.
+- **Safe by default.** Deploy never deletes, never touches automations or schedules, never changes field types on DEs with data, refuses on failed checks, and logs every deploy (including forced ones) to `mc/audit.log.jsonl`.
 - **Supported Agentia integration.** Plugins cannot call Agentia internals yet, so all Copado calls go through `agentia ... --json` in one file (`plugin/src/core/agentia.ts`).
 
 ## Repo layout
@@ -123,7 +132,7 @@ Then ask: *"Ship the spring promo email from DEV to PROD and link it to US-00012
 ```
 plugin/          Agentia CLI plugin (scaffolded with npm init @copado/agentia-plugin)
   src/commands/mc/   connect, pull, diff, check, explain, deploy
-  src/core/          SFMC client (live + mock), AMPscript parser, rules, diff, explain
+  src/core/          SFMC client (live + mock), AMPscript and SQL readers, rules, diff, explain
   test/              unit tests (node --test)
 mcp-server/      MCP server exposing the commands as tools
 skills/mc-ship/  SKILL.md + rules reference
@@ -142,6 +151,7 @@ cd mcp-server && npm install && MCSHIP_PROJECT_DIR=/tmp/mc-ship-demo npm test   
 
 - Asset types: Data Extensions (schema) and Content Builder `htmlemail`, `htmlblock`, `template`. Automations and Journeys are next.
 - **Tested live** against a production Marketing Cloud account (Windows, Agentia CLI beta): pull of a full BU (368 Data Extensions, 67 content assets), filtered pull with `--only`, and deploys that created a Data Extension, a content block and an email, then added a field and updated the email. Smoke test kit: [demo/live-test](demo/live-test/README.md).
+- **Automation Studio** support (SQL queries and automations) is covered by unit tests and the mock end-to-end run; it uses the documented `automation/v1` REST endpoints and has not been run against a live account yet.
 - Installed package scopes needed: Email read/write, Saved Content read/write, Documents and Images read/write, Data Extensions read/write. Without Email write, creating emails returns HTTP 403.
 - The video demo uses mock BUs so it is repeatable and shows no customer data.
 - Built on Agentia CLI `1.0.0-beta.2` (alpha preview): commands may change.
